@@ -1,13 +1,15 @@
-* Creates table of summary statistics
+// Creates table of summary statistics
 
-cap prog drop sumStats
-prog def sumStats
+cap prog drop sumstats
+prog def sumstats
 
-syntax anything using, stats(string asis) [*]
+version 15.1
+
+syntax anything using/ [aw fw], stats(string asis) [replace]
 
 cap mat drop stats_toprint
-
-* Separate into variable lists
+qui {
+// Separate into variable lists
 
 	local x = 0
 	while strpos("`anything'",")") > 0 {
@@ -16,51 +18,56 @@ cap mat drop stats_toprint
 			local `x' = subinstr("``x''","(","",1) 			// Remove open-parenthesis.
 
 		local anything    = substr("`anything'",strpos("`anything'",")")+1,.) 	// Replace remaining list with everything after close-parenthesis
-		}
+	}
 
-* Stats and labels
+// Initialize output Excel file
 
+	putexcel set `using' , `replace'
+
+	// Stats headers
+	local col = 1
+	foreach stat in `stats' {
+		local ++col
+		local theCol : word `col' of `c(ALPHA)'
+		putexcel `theCol'1 = "`stat'" , bold
+	}
+
+// Loop over groups
+
+	local theRow = 1
 	forvalues i = 1/`x' {
-		cap mat drop blankrow
-		qui tabstat  ``i''  ///
-			, s(`stats') save
+		local ++theRow
 
-			mat a = r(StatTotal)'
-			mat blankrow = J(1,colsof(a),.)
-
+		// Catch if-condition if any, else print full sample
 		if regexm("``i''"," if ") {
-			local ifcond = substr("``i''",strpos("``i''"," if "),.)
-			local ifcond = substr(subinstr("`ifcond'"," if ","",.),1,30)
-				mat rownames blankrow = "`ifcond'"
-			}
-
-		if regexm("``i''"," if ") local stats_toprint = substr("``i''",1,strpos("``i''"," if "))
-			else local stats_toprint = "``i''"
-
-		if regexm("``i''"," if ")  local allLabels = `" `allLabels' "`ifcond'""'
-			else local allLabels = `" `allLabels' "unrestricted""'
-
-		foreach var of varlist `stats_toprint' {
-			local theLabel : var label `var'
-			local theRownames = `"`theRownames' "`theLabel'""'
-			local theLabel = substr("`theLabel'",1,30)
-			local allLabels = `"`allLabels' "`theLabel'""'
-			}
-
-		mat stats_toprint = nullmat(stats_toprint) \ nullmat(blankrow) \ r(StatTotal)'
-
+			local ifcond = substr("``i''",strpos("``i''"," if ")+4,.)
+			local justvars = substr("``i''",1,strpos("``i''"," if "))
+			local ifcond = `"Subsample: `ifcond'"'
 		}
+		else local ifcond "Full Sample"
+		putexcel A`theRow' = "`ifcond'", bold
 
-* Output
+		// Get statistics
+		local ++theRow
+		qui tabstat  ``i''  ///
+			[`weight'`exp'] ///
+			, s(`stats') save
+			mat a = r(StatTotal)'
+			putexcel B`theRow' = matrix(a) , nformat(number_d2)
 
-	mat rownames stats_toprint = `allLabels'
+		// Get variable labels
+		local varRow = `theRow'
+		foreach var in `justvars' {
+			local theLabel : var label `var'
+			putexcel A`varRow' = "`theLabel'"
+			local ++varRow
+		}
+	local theRow = `theRow' + `=rowsof(a)'
+	}
 
-	local statnames = subinstr("`stats'"," ",`"" ""',.)
-	mat colnames stats_toprint = "`statnames'"
+// Finalize
 
-	xml_tab stats_toprint ///
-		`using' ///
-	,  	rnames(`theRownames') ///
-		`options'
-
+	putexcel close
+} // end qui
+di in red "Summary statistics output to `using'"
 end
